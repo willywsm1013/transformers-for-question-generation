@@ -80,11 +80,14 @@ def load_data(path, mode):
 
 class ParaphraseDataset(Dataset):
     def __init__(self, args, tokenizer, data, file_path, is_score=False, save_cache=True):
-        assert os.path.isfile(file_path)
-        directory, filename = os.path.split(file_path)
-        cached_features_file = os.path.join(directory, 'cached_%s'%filename.split('.')[0])
 
-        if os.path.exists(cached_features_file) and not is_score:
+        cached_features_file = None
+        if file_path is not None:
+            assert os.path.isfile(file_path)
+            directory, filename = os.path.split(file_path)
+            cached_features_file = os.path.join(directory, 'cached_%s'%filename.split('.')[0])
+
+        if cached_features_file is not None and  os.path.exists(cached_features_file) and not is_score:
             logger.info("Loading features from cached file %s", cached_features_file)
             with open(cached_features_file, 'rb') as handle:
                 self.examples = pickle.load(handle)
@@ -326,6 +329,7 @@ def evaluate(args, model, tokenizer, dataset, prefix=""):
 
     start_time = timeit.default_timer()
     losses = []
+    class_probs = []
     true_acc = []
     fake_acc = []
     
@@ -353,6 +357,10 @@ def evaluate(args, model, tokenizer, dataset, prefix=""):
             outputs = model(**inputs)
 
         logits = outputs[1]
+        probs = F.softmax(logits)
+        for p, l in zip(probs, labels):
+            class_probs.append(p[l].item())
+
         pred_class = torch.argmax(logits, dim=-1)
         acc = (pred_class == labels).cpu().numpy().astype(np.float)
 
@@ -367,11 +375,12 @@ def evaluate(args, model, tokenizer, dataset, prefix=""):
             else:
                 fake_acc.append(a)
     losses = np.mean(losses)
-
+    class_probs = np.mean(class_probs)
     true_acc = np.mean(true_acc)
     fake_acc = np.mean(fake_acc)
     all_acc = (true_acc+fake_acc)/2
     results = {'loss':losses, 
+               'class_prob':class_probs, 
                'acc':all_acc,
                'true_acc':true_acc, 'fake_acc':fake_acc}
     return results
@@ -383,7 +392,7 @@ def score(args, model, tokenizer, dataset, prefix=""):
     eval_sampler = SequentialSampler(dataset)
     eval_dataloader = DataLoader(dataset, batch_size=args.eval_batch_size,
                                  sampler=eval_sampler,
-                                 collate_fn=partial(squad_collate, pad_id=tokenizer.pad_token_id))
+                                 collate_fn=partial(my_collate, pad_id=tokenizer.pad_token_id))
 
     # multi-gpu evaluate
     if args.n_gpu > 1:
@@ -395,50 +404,39 @@ def score(args, model, tokenizer, dataset, prefix=""):
     logger.info("  Batch size = %d", args.eval_batch_size)
 
     start_time = timeit.default_timer()
-    all_acc = []
-    results = defaultdict(list)
+    class_probs=[]
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
         batch = [t.to(args.device) for t in batch]
 
         input_ids = batch[0]
-        labels = batch[1]
-        token_type_ids = batch[2]
+        labels = batch[2]
         attention_mask = input_ids!=tokenizer.pad_token_id
 
 
         with torch.no_grad():
             inputs = {
                 'input_ids':      input_ids,
-                'token_type_ids': token_type_ids,
                 'attention_mask': attention_mask,
                 'labels':         labels,
-                'reduction':      'none'
             }
-            
+            if args.model_type != 'distilbert':
+                inputs['token_type_ids'] = None if args.model_type == 'xlm' else batch[1]  # XLM don't use segment_ids
+           
             # XLNet and XLM use more arguments for their predictions
             if args.model_type in ['xlnet', 'xlm']:
                 inputs.update({'cls_index': batch[4], 'p_mask': batch[5]})
 
             outputs = model(**inputs)
         
-        logits = outputs[1].cpu().numpy()
-        pred_class = np.argmax(logits, -1)
-        acc = (pred_class == labels.cpu().numpy()).astype(np.float)
+        logits = outputs[1]
+        probs = F.softmax(logits, dim=-1)
+        for i, (p, l) in enumerate(zip(probs, labels)):
+            assert l.item() == 1
+            class_probs.append(p[l].item())
 
-        all_acc.extend(acc)
-
-        probs = F.softmax(outputs[1], dim=-1)
-        probs = probs[:,1].cpu().numpy().tolist()
-        example_ids = batch[3].cpu().numpy().tolist()
-        pred_ids = batch[4].cpu().numpy().tolist()
-
-        for idx, p_idx, p in zip(example_ids, pred_ids, probs):
-            if len(results[idx]) > p_idx:
-                results[idx][p_idx] = max(results[idx][p_idx], p)
-            else:
-                results[idx].append(p)
-    return results
+    class_probs = np.mean(class_probs)
+    return class_probs
 
 def main():
     parser = argparse.ArgumentParser()
@@ -456,7 +454,7 @@ def main():
                         help="")
     parser.add_argument("--eval_file_path", default=None, type=str,
                         help="")
-    parser.add_argument("--score_file_path", default=None, type=str,
+    parser.add_argument("--score_file_path", default=None, nargs='+', type=str,
                         help="")
     parser.add_argument("--output_file_path", default=None, type=str,
                         help="")
@@ -622,7 +620,9 @@ def main():
     # Evaluation - we can ask to evaluate all the checkpoints (sub-directories) in a directory
     if args.do_eval and args.local_rank in [-1, 0]:
         results = {}
-        eval_dataset = TextDataset(args, tokenizer, args.eval_file_path)
+        eval_data = load_data(args.eval_file_path, mode='eval') 
+        eval_dataset = ParaphraseDataset(args, tokenizer, eval_data, args.eval_file_path)
+
         checkpoints = [os.path.join(args.output_dir, 'checkpoint')]
         if args.eval_all_checkpoints:
             checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
@@ -633,7 +633,7 @@ def main():
         for checkpoint in checkpoints:
             # Reload the model
             global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
-            model = model_class.from_pretrained(checkpoint, force_download=True)
+            model = AutoModelForSequenceClassification.from_pretrained(checkpoint, force_download=True)
             model.to(args.device)
 
             # Evaluate
@@ -646,16 +646,18 @@ def main():
     
     if args.do_score:
         # read data
-        score_dataset = SquadDataset(args, tokenizer, args.score_file_path,
-                                     save_cache=False)
+        score_data = load_data(args.score_file_path, mode='score') 
+        score_dataset = ParaphraseDataset(args, tokenizer, score_data, None, is_score=True, save_cache=False)
+
         # load checkpoint 
         checkpoint = os.path.join(args.output_dir, 'checkpoint')
-        model = model_class.from_pretrained(checkpoint, force_download=True)
+        model = AutoModelForSequenceClassification.from_pretrained(checkpoint, force_download=True)
         model.to(args.device)
 
         # pred probs
         result = score(args, model, tokenizer, score_dataset)
-
+        print (result)
+        '''
         # write result
         with open(args.score_file_path, 'r') as f:
             data = json.load(f)
@@ -664,6 +666,6 @@ def main():
                 elem['quora_prob'] = result[i]
         with open(args.output_file_path, 'w') as f:
             json.dump(data, f, indent=1, ensure_ascii=False)
-
+        '''
 if __name__ == "__main__":
     main()
