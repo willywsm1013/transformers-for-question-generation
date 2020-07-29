@@ -257,6 +257,10 @@ if is_torch_available():
         load_tf_weights_in_gpt2,
         GPT2_PRETRAINED_MODEL_ARCHIVE_LIST,
     )
+    from .modeling_gpt2qg import (
+        GPT2QGModel
+    )
+
     from .modeling_ctrl import CTRLPreTrainedModel, CTRLModel, CTRLLMHeadModel, CTRL_PRETRAINED_MODEL_ARCHIVE_LIST
     from .modeling_xlnet import (
         XLNetPreTrainedModel,
