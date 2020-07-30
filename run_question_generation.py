@@ -560,6 +560,15 @@ def train(args, train_dataset, dev_dataset, model, tokenizer):
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
     )
+    if args.fp16:
+        try:
+            from apex import amp
+        except ImportError:
+            raise ImportError(
+                "Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+
+        model, optimizer = amp.initialize(
+            model, optimizer, opt_level=args.fp16_opt_level)
 
     # Train!
     logger.info("***** Running training *****")
@@ -615,10 +624,21 @@ def train(args, train_dataset, dev_dataset, model, tokenizer):
             loss = loss_fct(logits.view(-1, logits.size(-1)),
                             labels.view(-1))
             loss = loss/total_num
-            loss.backward()
+            if args.fp16:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
+
             loss_sum += loss.item()
 
-        nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+        if args.fp16:
+            torch.nn.utils.clip_grad_norm_(
+                amp.master_params(optimizer), args.max_grad_norm)
+        else:
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), args.max_grad_norm)
+
         optimizer.step()
         scheduler.step()  # Update learning rate schedule
         model.zero_grad()
@@ -636,6 +656,7 @@ def train(args, train_dataset, dev_dataset, model, tokenizer):
             if args.evaluate_during_training:
                 loss = evaluate(args, dev_dataset, model, tokenizer)
                 summary_writer.add_scalar('eval_loss', loss, i)
+                logger.info('eval loss : %f'%loss)
 
             if loss is None or loss < min_loss:
                 min_loss = loss
@@ -1470,6 +1491,12 @@ def main():
     parser.add_argument("--top_p", type=float, default=0.0)
     parser.add_argument("--ag", action='store_true')
 
+    parser.add_argument('--fp16', action='store_true',
+                        help="Whether to use 16-bit (mixed) precision (through NVIDIA apex) instead of 32-bit")
+    parser.add_argument('--fp16_opt_level', type=str, default='O1',
+                        help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
+                             "See details at https://nvidia.github.io/apex/amp.html")
+
     # file path
     parser.add_argument("--save_dir", default=None)
     parser.add_argument("--train_file_path", default='data/squad/train.json')
@@ -1485,6 +1512,8 @@ def main():
     # check devices 
     args.device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     args.n_gpu = torch.cuda.device_count()
+    logger.warning("Process device: %s, n_gpu: %s, 16-bits training: %s",
+                   args.device, args.n_gpu, args.fp16)
 
     # get tokenizer
     tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
@@ -1514,6 +1543,14 @@ def main():
     model = GPT2QGModel.from_pretrained(args.model_name_or_path, config=config)
     model.resize_token_embeddings(len(tokenizer))  # Notice: resize_token_embeddings expect to receive the full size of the new vocabulary, i.e. the length of the tokenizer.
     model.to(args.device)
+
+    if args.fp16:
+        try:
+            import apex
+            apex.amp.register_half_function(torch, 'einsum')
+        except ImportError:
+            raise ImportError(
+                "Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
 
     # action
     if args.action == 'train':
