@@ -73,8 +73,7 @@ def tokenize_by_space(context):
 
 class Example:
     def __init__(self, context, question, answer, answer_start_position, answer_end_position,
-                 example_id, question_id, unique_id,
-                 question_num):
+                 example_id):
         self.context = context
         self.question = question
         self.answer = answer
@@ -83,17 +82,12 @@ class Example:
         self.answer_end_position = answer_end_position
 
         self.example_id = example_id
-        self.question_id = question_id
-        self.unique_id = unique_id
-
-        self.question_num = question_num
 
 class Feature:
-    def __init__(self, inputs, labels, example_id, unique_id):
+    def __init__(self, inputs, labels, example_id):
         self.inputs = inputs
         self.labels = labels
         self.example_id = example_id
-        self.unique_id = unique_id
 
 def load_squad_example(file_path, tokenizer, mode):
     with open(file_path) as f:
@@ -101,8 +95,6 @@ def load_squad_example(file_path, tokenizer, mode):
 
     examples = []
     context_token_cache = {}
-    unique_id = 100000
-    example_id = 0
     for elem in tqdm(data['data'], desc='process'):
         for para in elem['paragraphs']:
             context = para['context']
@@ -129,6 +121,7 @@ def load_squad_example(file_path, tokenizer, mode):
             for qa in para['qas']:
                 # question
                 question = qa['question'].strip()
+                example_id = qa['id']
 
                 # answer
                 assert mode != 'train' or len(qa['answers']) == 1, 'For training data, assuming there is only one answer.'
@@ -149,13 +142,8 @@ def load_squad_example(file_path, tokenizer, mode):
                                       answer, 
                                       answer_start_position, 
                                       answer_end_position,
-                                      example_id,
-                                      0,
-                                      unique_id,
-                                      1)
+                                      example_id)
                     examples.append(example)
-                    unique_id += 1
-                example_id += 1 
     return examples, context_token_cache
 
 def load_qg_example(file_path, tokenizer):
@@ -164,8 +152,7 @@ def load_qg_example(file_path, tokenizer):
 
     examples = []
     context_token_cache = {}
-    unique_id = 1000000
-    for example_id, elem in enumerate(tqdm(data, desc='process example', ncols=50)):
+    for elem in tqdm(data, desc='process example', dynamic_ncols=True):
         context = elem['context']
         if context not in context_token_cache:
             # tokenize context by space 
@@ -188,6 +175,7 @@ def load_qg_example(file_path, tokenizer):
             word_to_tok_index = context_token_cache[context]['word_to_tok_index']
 
         answers = [json.loads(answer) for answer in set([json.dumps(answer)for answer in elem['answers']])]
+        example_id = elem['id']
         for answer in answers:
             answer_text = answer['text']
             answer_start = answer['answer_start']
@@ -203,12 +191,8 @@ def load_qg_example(file_path, tokenizer):
                                    answer, 
                                    answer_start_position, 
                                    answer_end_position,
-                                   example_id,
-                                   question_id,
-                                   unique_id,
-                                   question_num)
+                                   '%s_%d'%(example_id, question_id))
                 examples.append(example)
-                unique_id += 1
 
     return examples, context_token_cache
 
@@ -252,8 +236,7 @@ def convert_to_features(examples, tokenizer, context_token_cache, max_seq_len, d
         assert len(inputs) == len(labels)
         features.append(Feature(inputs=inputs,
                                 labels=labels,
-                                example_id = example.example_id,
-                                unique_id=example.unique_id))
+                                example_id = example.example_id))
     return features
 
 class TextDataset(Dataset):
@@ -266,8 +249,7 @@ class TextDataset(Dataset):
     def __getitem__(self, item):
         return torch.tensor(self.features[item].inputs),\
                torch.tensor(self.features[item].labels), \
-               torch.tensor(self.features[item].example_id), \
-               torch.tensor(self.features[item].unique_id)
+               self.features[item].example_id
 
 def load_and_cached_data(config, tokenizer, file_path, mode, max_seq_len=400, is_qg=False,
                          output_example=False,
@@ -286,7 +268,7 @@ def load_and_cached_data(config, tokenizer, file_path, mode, max_seq_len=400, is
         examples = cache_data['examples']
         features = cache_data['features']
     else:
-        logger.info("Creating features from dataset file at %s", directory)
+        logger.info("Creating features from file %s", file_path)
 
         if is_qg:
             examples, context_token_cache = load_qg_example(file_path, tokenizer) 
@@ -321,8 +303,8 @@ def my_collate(batch, pad_id):
             new_batch.append(nn.utils.rnn.pad_sequence(elem, batch_first=True, padding_value=pad_id))
         elif i == 1:
             new_batch.append(nn.utils.rnn.pad_sequence(elem, batch_first=True, padding_value=-1))
-        elif i == 2 or i == 3:
-            new_batch.append(torch.stack(elem, dim=0))
+        elif i == 2 :
+            new_batch.append(elem)
         else:
             raise ValueError
 
@@ -391,7 +373,7 @@ def train(args, train_dataset, dev_dataset, model, tokenizer):
         total_num = sum([torch.sum(batch[1]!=-1) for batch in batches])
         for batch in batches:
             ## from train dataset
-            batch = [t.to(args.device) for t in batch]
+            batch = [t.to(args.device) for t in batch[:-1]] + batch[-1:]
 
             inputs = batch[0]
             labels = batch[1]
@@ -461,11 +443,10 @@ def evaluate(args, dataset, model, tokenizer):
     results = {}
     with torch.no_grad():
         for batch in tqdm(dataloader, desc='eval', ncols=50):
-            batch = [t.to(args.device) for t in batch]
+            batch = [t.to(args.device) for t in batch[:-1]] + batch[-1:]
             inputs = batch[0]
             labels = batch[1]
-            example_id = batch[2].cpu().numpy()
-            unique_id = batch[3].cpu().numpy()
+            example_id = batch[2]
 
             outputs = model(inputs)
 
@@ -496,94 +477,76 @@ def evaluate(args, dataset, model, tokenizer):
     print ('%s,%f'%(args.dev_file_path.split('/')[-2], ppl))
     return {'loss':ppl}
 
-Result = namedtuple('Result', ['log_prob', 'token_num'])
 def score(args, dataset, model, tokenizer):
     dataloader = DataLoader(dataset, batch_size=args.eval_batch_size,
                             collate_fn=partial(my_collate, pad_id=tokenizer.pad_token_id))
-    loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='none')
-    results = {}
     def log_softmax(x):
         x = np.exp(x-np.max(x))
         return np.log(x/np.sum(x, axis=1)+1e-12)
         
+    loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='none')
+    results = {}
     with torch.no_grad():
         for batch in tqdm(dataloader, desc='score', ncols=50):
-            unique_id = batch[2].numpy().tolist()
-            token_num = torch.sum(batch[1]!=-1, axis=1).numpy().tolist()
-
-            if args.use_onnx:
-                batch = [np.ascontiguousarray(t.numpy()) for t in batch]
-                inputs, labels = batch[0], batch[1]
-                logits = model.run(None,{'input_ids':inputs})
-
-                log_probs = log_softmax(logits.reshape(-1, logits.shape[-1])) # [batch*seq_len, vocab_size]
-                labels = labels.reshape(-1)
-                log_probs = log_probs[np.arange(labels.shape[0]),labels] # [batch*seq_len]
-                log_probs = log_probs.reshape(logits.shape[0], -1) # [batch, seq_len]
-
-            else:
-                batch = [t.to(args.device) for t in batch]
-                inputs, labels = batch[0], batch[1]
-
-                outputs = model(inputs)
-
-                # get logits
-                logits = outputs[0]
-
-                # flatten the tokens
-                log_probs = -loss_fct(logits.view(-1, logits.size(-1)),
-                                      labels.view(-1))
-                log_probs = log_probs.view(logits.size(0), -1).cpu().numpy()
+            batch = [t.to(args.device) for t in batch[:-1]] + batch[-1:]
             
-            log_probs = np.sum(log_probs, axis=1)
-            log_probs = log_probs.tolist()
-            for i, u_id in enumerate(unique_id):
-                results[u_id]=Result(log_prob=log_probs[i], token_num=token_num[i])
+            inputs=batch[0]
+            labels = batch[1]
+            example_ids = batch[2]
+            
+
+            outputs = model(inputs)
+
+            # get logits
+            logits = outputs[0]
+
+            # flatten the tokens
+            log_probs = -loss_fct(logits.view(-1, logits.size(-1)),
+                                  labels.view(-1))
+            log_probs = torch.sum(log_probs.view(logits.size(0), -1), dim=1).cpu().numpy().tolist()
+            token_nums = torch.sum(labels!=-1, dim=1).cpu().numpy().tolist()
+
+            for log_prob, token_num, example_id in zip(log_probs, token_nums, example_ids):
+                if example_id not in results or results[example_id][2]<log_prob/token_num:
+                    results[example_id]=(log_prob, token_num, log_prob/token_num)
+
     return results
 
-def convert_to_onnx_model(args, model, dataset):
-    model_onnx_path = args.model_onnx_path
-    
-    batch = dataset[0]
-    batch = [t.to(args.device) for t in batch]
-    inputs, labels, unique_id = batch[0], batch[1], batch[2]
-
-    with torch.no_grad():
-        input_names = ['input_ids']
-        output_names = ['output']
-        symbolic_names = {0: 'batch_size', 1: 'max_seq_len'}
-        dynamic_axes = {'input_ids':symbolic_names,
-                        'output':symbolic_names}
-        torch.onnx.export(model, (inputs.reshape(1,-1),), model_onnx_path, 
-                          do_constant_folding=True, 
-                          opset_version=11,
-                          input_names=input_names, output_names=output_names,
-                          dynamic_axes = dynamic_axes,
-                          verbose=True)
-
-def write_output(results, examples, output_file):
-    final_outputs = {}
-    
-    for example in examples:
-        example_id = example.example_id
-        unique_id = example.unique_id
-        result = results[unique_id]
-        if example.example_id in final_outputs:
-            elem = final_outputs[example.example_id]
-        else:
-            elem = {'context':example.context,
-                    'answers':example.answer,
-                    'pred_question':['']*example.question_num,
-                    'lm_log_prob':[-1e4]*example.question_num,
-                    'lm_token_num':[0]*example.question_num}
-            final_outputs[example.example_id] = elem
-        elem['pred_question'][example.question_id] = example.question
-        elem['lm_log_prob'][example.question_id] = result.log_prob
-        elem['lm_token_num'][example.question_id] = result.token_num
-
-    final_outputs = [final_outputs[i] for i in range(len(final_outputs))]
+def write_output(results, input_file, output_file):
+    with open(input_file, 'r') as f:
+        data = json.load(f) 
+    for elem in data:
+        example_id = elem['id']
+        elem['lm_log_prob'] = [0]*len(elem['pred_question'])
+        elem['lm_token_num'] = [0]*len(elem['pred_question'])
+        for q_id, pred_question in enumerate(elem['pred_question']):
+            question_id = '%s_%d'%(example_id, q_id)
+            elem['lm_log_prob'][q_id] = results[question_id][0]
+            elem['lm_token_num'][q_id] = results[question_id][1]
     with open(output_file, 'w') as f:
-        json.dump(final_outputs, f, indent=1, ensure_ascii=False)
+        json.dump(data, f, indent=1, ensure_ascii=False)
+
+    #final_outputs = {}
+    #for example in examples:
+    #    example_id = example.example_id
+    #    unique_id = example.unique_id
+    #    result = results[unique_id]
+    #    if example.example_id in final_outputs:
+    #        elem = final_outputs[example.example_id]
+    #    else:
+    #        elem = {'context':example.context,
+    #                'answers':example.answer,
+    #                'pred_question':['']*example.question_num,
+    #                'lm_log_prob':[-1e4]*example.question_num,
+    #                'lm_token_num':[0]*example.question_num}
+    #        final_outputs[example.example_id] = elem
+    #    elem['pred_question'][example.question_id] = example.question
+    #    elem['lm_log_prob'][example.question_id] = result.log_prob
+    #    elem['lm_token_num'][example.question_id] = result.token_num
+
+    #final_outputs = [final_outputs[i] for i in range(len(final_outputs))]
+    #with open(output_file, 'w') as f:
+    #    json.dump(final_outputs, f, indent=1, ensure_ascii=False)
 
 
 def main():
@@ -677,12 +640,14 @@ def main():
         dev_dataset = load_and_cached_data(config, tokenizer, args.dev_file_path, mode='dev', save_cache=True)
         train(args, train_dataset, dev_dataset, model, tokenizer)
     elif args.action == 'eval':
-        dataset = load_and_cached_data(config, tokenizer, args.dev_file_path, is_qg=args.is_qg, save_cache=False)
+        dataset = load_and_cached_data(config, tokenizer, args.dev_file_path, mode='dev', 
+                                       is_qg=args.is_qg, save_cache=False)
         result = evaluate(args, dataset, model, tokenizer)
     elif args.action == 'score':
-        dataset, examples = load_and_cached_data(config, tokenizer, args.score_file_path, is_qg=True,
+        assert args.output_file is not None
+        dataset, examples = load_and_cached_data(config, tokenizer, args.score_file_path, mode='score', is_qg=True,
                                                  output_example=True, save_cache=False)
         results = score(args, dataset, model, tokenizer)
-        write_output(results, examples, args.output_file)
+        write_output(results, args.score_file_path, args.output_file)
 if __name__ == '__main__':
     main()
