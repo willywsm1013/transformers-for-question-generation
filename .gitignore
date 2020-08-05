@@ -141,7 +141,7 @@ runs
 /examples/**/*.args
 
 # data
-/data
+/data/*/.json
 serialization_dir
 
 # emacs
