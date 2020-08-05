@@ -1441,7 +1441,7 @@ def generate(model, inputs, ans_pos, attention_mask, max_len, tokenizer, mode, c
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action",choices=['train', 'eval', 'eval_loss','gen'])
+    parser.add_argument("action",choices=['train', 'eval', 'gen'])
 
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
         help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(MODEL_CLASSES.keys())
@@ -1562,41 +1562,35 @@ def main():
                                   gen=False, 
                                   answer_position_encoding=config.answer_position_encoding)
         train(args, train_dataset, dev_dataset, model, tokenizer)
+    
     elif args.action == 'eval':
         dataset = TextDataset(tokenizer, args.dev_file_path, config.data_mode,
-                              answer_at_start=config.answer_at_start,evaluate=True, bi=config.bi)
-        result = evaluate_qg(args, dataset, model, tokenizer)
-    
-    elif args.action == 'eval_loss':
-        dataset = TextDataset(tokenizer, args.dev_file_path, config.data_mode,
-                              answer_at_start=config.answer_at_start,evaluate=False, bi=config.bi)
-        result = evaluate_loss(args, dataset, model, tokenizer)
+                              gen=False,
+                              answer_position_encoding=config.answer_position_encoding)
+        result = evaluate(args, dataset, model, tokenizer)
         print ('%s,%f'%(args.model_name_or_path.split('/')[-2],result))
 
     elif args.action == 'gen':
+        from collections import defaultdict
         assert args.output_file is not None
         bos_id = tokenizer.bos_token_id
         eos_id = tokenizer.eos_token_id
         pad_id = tokenizer.pad_token_id
 
-
         if args.ag:
             logger.info('Input file without questions!')
         dataset = TextDataset(tokenizer, args.dev_file_path, config.data_mode,
-                              answer_at_start=config.answer_at_start, evaluate=True, bi=config.bi,
-                              is_ag=args.ag)
+                              gen=True, is_ag=args.ag,
+                              answer_position_encoding=config.answer_position_encoding)
 
         dataloader = DataLoader(dataset, batch_size=args.eval_batch_size,
-                            collate_fn=partial(my_collate, pad_id=pad_id, is_training=False))
-        with open(args.eval_file, 'r') as f:
-            eval_file = json.load(f)
+                            collate_fn=partial(my_collate, pad_id=pad_id, is_gen=True))
 
         model.eval()
         
-        pred_all_questions = []
-        pred_all_questions_token_num = []
-        pred_all_log_probs = []
-        count=0
+        pred_all_questions = defaultdict(list)
+        pred_all_questions_token_num = defaultdict(list)
+        pred_all_log_probs = defaultdict(list)
         
         # mask impossible grnerated token
         bos_id = tokenizer.bos_token_id
@@ -1620,21 +1614,20 @@ def main():
             searcher = DiverseBeamSearcher(model, tokenizer, vocab_mask=vocab_mask)
 
         for batch in tqdm(dataloader, desc='generate', dynamic_ncols=True):
-            batch = [t.to(args.device) for t in batch]
+            batch = [t.to(args.device) for t in batch[:-1]] + batch[-1:]
             
             input_ids = batch[0]
-            question = batch[1]
-            answer_position = batch[2]
-            attention_mask = batch[3]
+            answer_position = batch[1]
+            example_ids = batch[2]
+            attention_mask = input_ids != pad_id
 
-            input_len = input_ids.size(-1)
-            attention_mask = attention_mask[:,:input_len, :input_len]*(input_ids!=pad_id).unsqueeze(1)
 
             if args.inference == 'greedy':
                 pred_questions, log_probs = searcher.decode(input_ids, answer_position, attention_mask, args.max_len,
                                                              device=args.device)
                 pred_questions = [[q] for q in pred_questions.cpu().numpy()]
                 log_probs = [[p] for p in log_probs.cpu().numpy().tolist()]
+
             elif args.inference == 'sample':
                 pred_questions = []
                 log_probs = []
@@ -1672,31 +1665,69 @@ def main():
                 pred_questions = pred_questions.cpu().numpy().tolist()
                 log_probs = log_probs.cpu().numpy().tolist()
 
-            for pred in pred_questions:
-                pred_text = []
-                pred_token_num = []
-                for q in pred:
+            assert len(example_ids) == len(pred_questions)
+            for example_id, pred, log_prob in zip(example_ids, pred_questions, log_probs):
+                for q, p in zip(pred, log_prob):
                     q = list(takewhile(lambda x:x!=eos_id, q))
-                    pred_token_num.append(len(q)+1)
-                    #print (tokenizer.decode(q, clean_up_tokenization_spaces=True, skip_special_tokens=True))
+                    pred_all_questions_token_num[example_id].append(len(q)+1)
                     q = tokenizer.decode(q, clean_up_tokenization_spaces=True, skip_special_tokens=True).strip()
-                    pred_text.append(q)
-                pred_all_questions.append(pred_text)
-                pred_all_questions_token_num.append(pred_token_num)
-            pred_all_log_probs.extend(log_probs)
-            assert len(pred_all_questions)  == len(pred_all_log_probs)
+                    pred_all_questions[example_id].append(q)
+                    pred_all_log_probs[example_id].append(p)
 
-        assert len(pred_all_questions) == len(pred_all_log_probs)
+            assert len(pred_all_questions)  == len(pred_all_log_probs) == len(pred_all_questions_token_num)
+
+
+        # merge same questions and sorted by generated probabilities
+        results = {}
+        for key in pred_all_questions:
+            questions = pred_all_questions[key]
+            token_nums = pred_all_questions_token_num[key]
+            log_probs = pred_all_log_probs[key]
+
+            table = {}
+            for q, n, p in zip(questions, token_nums, log_probs):
+                # keep large probability
+                if q not in table or p > table[q][0]:
+                    table[q] = (p, n)
+            results[key] = [elem for elem in sorted(((q,)+v for q,v in table.items()), key=lambda x:x[1], reverse=True)]
+
+        with open(args.dev_file_path) as f:
+            data = json.load(f)
+
+
+        generated_data = []
+        data_num = 0
+        count = 0
+        for elem in data['data']:
+            for para in elem['paragraphs']:
+                context = para['context']
+                for qa in para['qas']:
+                    example_id = qa['id']
+                    if example_id in results:
+                        pred_questions, log_probs, token_nums = list(zip(*results[example_id]))
+                        generated_data.append({'context':context,
+                                               'question':qa['question'],
+                                               'answers':qa['answers'],
+                                               'pred_question':pred_questions,
+                                               'pred_question_token_num':token_nums,
+                                               'pred_question_log_prob':log_probs,
+                                               'id':example_id})
+                        count += 1
+                    data_num += 1
+        print ('%d/%d'%(count, data_num))
+
+        '''
         for elem, pred, pred_token_num, log_prob in zip(eval_file, pred_all_questions, pred_all_questions_token_num,
                                         pred_all_log_probs):
             elem['pred_question']=pred
             elem['pred_question_token_num'] = pred_token_num
             elem['pred_question_log_prob']=log_prob
-
+        '''
         output_dir = os.path.dirname(args.output_file)
         if output_dir != '':
             os.makedirs(output_dir, exist_ok=True)
         with open(args.output_file,'w') as f:
-            json.dump(eval_file, f, indent=1, ensure_ascii=False)
+            json.dump(generated_data, f, indent=1, ensure_ascii=False)
+
 if __name__ == '__main__':
     main()
