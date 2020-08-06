@@ -112,7 +112,7 @@ class ParaphraseDataset(Dataset):
 
     def _convert_to_features(self, data, tokenizer, is_score):
         examples = []
-        for example_id, example in enumerate(tqdm(data, ncols=50)):
+        for example_id, example in enumerate(tqdm(data, dynamic_ncols=True)):
             try:
                 q1 = tokenizer.encode(example['q1'])[1:-1]
                 q2 = tokenizer.encode(example['q2'])[1:-1]
@@ -221,7 +221,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     
     min_loss = np.inf
     for _ in train_iterator:
-        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0], ncols=50)
+        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0], dynamic_ncols=True)
         for step, batch in enumerate(epoch_iterator):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
@@ -334,7 +334,7 @@ def evaluate(args, model, tokenizer, dataset, prefix=""):
     fake_acc = []
     
     model.eval()
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+    for batch in tqdm(eval_dataloader, desc="Evaluating", dynamic_ncols=True):
         batch = tuple(t.to(args.device) for t in batch)
         input_ids = batch[0]
         labels = batch[2]

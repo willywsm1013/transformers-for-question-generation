@@ -473,8 +473,7 @@ def evaluate(args, dataset, model, tokenizer):
 
     log_ppl = log_p/num_word
     ppl = np.exp(log_ppl)
-    print (len(results))
-    print ('%s,%f'%(args.dev_file_path.split('/')[-2], ppl))
+    logger.info('%s,%f'%(args.dev_file_path.split('/')[-2], ppl))
     return {'loss':ppl}
 
 def score(args, dataset, model, tokenizer):
@@ -643,6 +642,7 @@ def main():
         dataset = load_and_cached_data(config, tokenizer, args.dev_file_path, mode='dev', 
                                        is_qg=args.is_qg, save_cache=False)
         result = evaluate(args, dataset, model, tokenizer)
+        print (args.model_name_or_path, result)
     elif args.action == 'score':
         assert args.output_file is not None
         dataset, examples = load_and_cached_data(config, tokenizer, args.score_file_path, mode='score', is_qg=True,
