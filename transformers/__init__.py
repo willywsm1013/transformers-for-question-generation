@@ -55,6 +55,7 @@ from .data import (
     SquadFeatures,
     SquadV1Processor,
     SquadV2Processor,
+    SquadQGProcessor,
     glue_convert_examples_to_features,
     glue_output_modes,
     glue_processors,

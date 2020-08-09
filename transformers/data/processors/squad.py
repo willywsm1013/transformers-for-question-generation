@@ -250,7 +250,7 @@ def squad_convert_example_to_features(example, max_seq_length, doc_stride, max_q
 
                 start_position = tok_start_position - doc_start + doc_offset
                 end_position = tok_end_position - doc_start + doc_offset
-
+        
         features.append(
             SquadFeatures(
                 span["input_ids"],
@@ -288,6 +288,7 @@ def squad_convert_examples_to_features(
     return_dataset=False,
     threads=1,
     tqdm_enabled=True,
+    sort=False,
 ):
     """
     Converts a list of examples into a list of features that can be directly given as input to a model.
@@ -359,26 +360,35 @@ def squad_convert_examples_to_features(
         example_index += 1
     features = new_features
     del new_features
+    
     if return_dataset == "pt":
         if not is_torch_available():
             raise RuntimeError("PyTorch must be installed to return a PyTorch dataset.")
+        
+        ## sort by token_num
+        idx = list(range(len(features)))
+        if sort:
+            if is_training:
+                logger.warning('Sorting in training mode')
+            logger.info('Sorting features by length')
+            idx = sorted(idx, key=lambda x:len(features[x].tokens), reverse=True)
 
         # Convert to Tensors and build dataset
-        all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-        all_attention_masks = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
-        all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
-        all_cls_index = torch.tensor([f.cls_index for f in features], dtype=torch.long)
-        all_p_mask = torch.tensor([f.p_mask for f in features], dtype=torch.float)
-        all_is_impossible = torch.tensor([f.is_impossible for f in features], dtype=torch.float)
+        all_input_ids = torch.tensor([features[i].input_ids for i in idx], dtype=torch.long)
+        all_attention_masks = torch.tensor([features[i].attention_mask for i in idx], dtype=torch.long)
+        all_token_type_ids = torch.tensor([features[i].token_type_ids for i in idx], dtype=torch.long)
+        all_cls_index = torch.tensor([features[i].cls_index for i in idx], dtype=torch.long)
+        all_p_mask = torch.tensor([features[i].p_mask for i in idx], dtype=torch.float)
+        all_is_impossible = torch.tensor([features[i].is_impossible for i in idx], dtype=torch.float)
 
+        all_feature_index = torch.tensor(idx, dtype=torch.long)
         if not is_training:
-            all_feature_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
             dataset = TensorDataset(
                 all_input_ids, all_attention_masks, all_token_type_ids, all_feature_index, all_cls_index, all_p_mask
             )
         else:
-            all_start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
-            all_end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
+            all_start_positions = torch.tensor([features[i].start_position for i in idx], dtype=torch.long)
+            all_end_positions = torch.tensor([features[i].end_position for i in idx], dtype=torch.long)
             dataset = TensorDataset(
                 all_input_ids,
                 all_attention_masks,
@@ -388,6 +398,7 @@ def squad_convert_examples_to_features(
                 all_cls_index,
                 all_p_mask,
                 all_is_impossible,
+                all_feature_index,
             )
 
         return features, dataset
@@ -657,6 +668,149 @@ class SquadV2Processor(SquadProcessor):
     train_file = "train-v2.0.json"
     dev_file = "dev-v2.0.json"
 
+class SquadQGProcessor(SquadProcessor):
+    def __init__(self, args):
+        self.args = args
+        super(SquadQGProcessor, self).__init__()
+    
+    def get_train_examples(self, filename):
+        """
+        Returns the training examples from the data directory.
+
+        Args:
+            filename: None by default, specify this if the training file has a different name than the original one
+                which is `train-v1.1.json` and `train-v2.0.json` for squad versions 1.1 and 2.0 respectively.
+
+        """
+        with open(filename, "r", encoding='utf-8') as reader:
+            input_data = json.load(reader)
+
+        return self._create_examples(input_data, "train")
+
+    def get_dev_examples(self, filename):
+        """
+        Returns the evaluation example from the data directory.
+
+        Args:
+            filename: None by default, specify this if the evaluation file has a different name than the original one
+                which is `train-v1.1.json` and `train-v2.0.json` for squad versions 1.1 and 2.0 respectively.
+        """
+        with open(filename, "r", encoding='utf-8') as reader:
+            input_data = json.load(reader)
+        return self._create_examples(input_data, "dev")
+
+    def _create_examples(self, input_data, set_type):
+        is_training = set_type == "train"
+        is_impossible = False
+        
+        topk = self.args.topk
+        sort_mode = self.args.sort_mode
+        use_cluster = self.args.use_cluster
+        a_prob_threshold = self.args.a_prob_threshold
+        rank_threshold = self.args.rank_threshold
+
+        logger.info('sort mode : %s'%sort_mode)
+        logger.info('questions per answer : %d'%topk)
+        
+        if topk > 1:
+            logger.info('cluster questions by : %s'%use_cluster)
+        
+        if a_prob_threshold is not None:
+            logger.info('a-prob-threshold : %f'%a_prob_threshold)
+
+        if rank_threshold is not None:
+            logger.info('rank threshold : %d'%rank_threshold)
+         
+        examples = []
+        for example_idx, entry in enumerate(tqdm(input_data, ncols=50)):
+            title=None
+            context_text = entry["context"]
+
+            if use_cluster is not None:
+                idx = entry['cluster_by_%s-%d_sort_by_%s_prob_idx'%(use_cluster, topk, sort_mode)]
+                
+                # filtering
+                if a_prob_threshold is not None:
+                    a_prob = entry['qa_prob']
+                    idx = [[i for i in ids if a_prob[i] >= a_prob_threshold] for ids in idx]
+
+                if rank_threshold is not None:
+                    answer_rank = entry['answer_rank']
+                    idx = [[i for i in ids if answer_rank[i] < rank_threshold] for ids in idx]
+     
+                idx = [ids[:1] for ids in idx]
+                idx = [i for ids in idx for i in ids]
+
+            else:
+                if sort_mode is None:
+                    idx = list(range(len(entry['pred_question'])))
+                elif sort_mode == 'qg':
+                    idx = entry['sort_by_qg_prob_idx']
+                elif sort_mode == 'qg_ln':
+                    idx = entry['sort_by_qg_prob_ln_idx']
+                elif sort_mode == 'a':
+                    idx = entry['sort_by_a_prob_idx']
+                elif sort_mode == 'qa':
+                    idx = entry['sort_by_qa_prob_idx']
+                else:
+                    raise Exception('Unknown sort_mode : %s'%sort_mode)
+
+                if a_prob_threshold is not None:
+                    a_prob = entry['qa_prob']
+                    idx = [i for i in idx if a_prob[i] >= a_prob_threshold]
+
+                if rank_threshold is not None:
+                    answer_rank = entry['answer_rank']
+                    idx = [i for i in idx if answer_rank[i] < rank_threshold]
+     
+                if topk != -1:
+                    idx = idx[:topk]
+
+            assert topk == -1 or len(idx) <= topk
+            pred_question = [entry['pred_question'][i] for i in idx]
+            
+            for question_idx, question_text in enumerate(pred_question):
+                if len(question_text.strip()) == 0:
+                    question_text = 'none'
+                    logger.warning('question is none')
+
+                start_position_character = None
+                answer_text = None
+                answers = entry['answers']
+                
+                if is_training:
+                    answers = [json.loads(answer) for answer in set([json.dumps(answer) for answer in answers])]
+                    for answer_id, answer in enumerate(answers):
+                        qas_id = '%s_%d_%d' %(entry['id'], question_idx, answer_id)
+                        answer_text = answer['text']
+                        start_position_character = answer['answer_start']
+
+                        example = SquadExample(
+                            qas_id=qas_id,
+                            question_text=question_text,
+                            context_text=context_text,
+                            answer_text=answer_text,
+                            start_position_character=start_position_character,
+                            title=title,
+                            is_impossible=is_impossible,
+                            answers=answers
+                        )
+                        examples.append(example)
+                else:
+                    raise NotImplementedError
+                    example = SquadExample(
+                        qas_id=qas_id,
+                        question_text=question_text,
+                        context_text=context_text,
+                        answer_text=answer_text,
+                        start_position_character=start_position_character,
+                        title=title,
+                        is_impossible=is_impossible,
+                        answers=answers
+                    )
+                    examples.append(example)
+
+        return examples
 
 class SquadExample(object):
     """

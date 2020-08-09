@@ -761,3 +761,147 @@ def compute_predictions_log_probs(
             writer.write(json.dumps(scores_diff_json, indent=4) + "\n")
 
     return all_predictions
+
+def compute_scores(all_examples, all_features, all_results, n_best_size, max_answer_length, do_lower_case,
+                             verbose_logging=False):
+    import numpy as np
+    from collections import defaultdict
+    example_index_to_features = collections.defaultdict(list)
+    for feature in all_features:
+        example_index_to_features[feature.example_index].append(feature)
+
+    unique_id_to_result = {}
+    for result in all_results:
+        unique_id_to_result[result.unique_id] = result
+
+    _PrelimPrediction = collections.namedtuple(  # pylint: disable=invalid-name
+        "PrelimPrediction",
+        ["feature_index", "start_index", "end_index", "start_logit", "end_logit"])
+
+    def log_softmax(x):
+        x = x-np.max(x)
+        x = np.exp(x)
+        return np.log(x/np.sum(x)+1e-4)
+    nbest={}
+    predict_text = {}
+    example_answer_log_prob = defaultdict(lambda:-np.inf)
+    for (example_index, example) in enumerate(all_examples):
+        features = example_index_to_features[example_index]
+
+        prelim_predictions = []
+        for (feature_index, feature) in enumerate(features):
+            if feature.unique_id not in unique_id_to_result:
+                logger.warning("unique id %s not found result"%feature.unique_id)
+                continue
+            result = unique_id_to_result[feature.unique_id]
+
+            # remove not context token
+            start_logits = result.start_logits[:len(feature.tokens)]
+            end_logits = result.end_logits[:len(feature.tokens)]
+
+            # compute log prob via log_softmax
+            start_log_probs = log_softmax(start_logits)
+            end_log_probs = log_softmax(end_logits)
+            answer_log_prob = start_log_probs[result.start_position] + end_log_probs[result.end_position]
+            example_answer_log_prob[example.qas_id] = max(example_answer_log_prob[example.qas_id], answer_log_prob)
+            if result.start_position == 0 or  result.end_position == 0:
+                continue
+            
+            # get all possible answers
+            start_indexes = _get_best_indexes(start_logits, n_best_size)
+            end_indexes = _get_best_indexes(end_logits, n_best_size)
+            
+            for start_index in start_indexes:
+                for end_index in end_indexes:
+                    # We could hypothetically create invalid predictions, e.g., predict
+                    # that the start of the span is in the question. We throw out all
+                    # invalid predictions.
+                    if start_index >= len(feature.tokens):
+                        continue
+                    if end_index >= len(feature.tokens):
+                        continue
+                    if start_index not in feature.token_to_orig_map:
+                        continue
+                    if end_index not in feature.token_to_orig_map:
+                        continue
+                    if not feature.token_is_max_context.get(start_index, False):
+                        continue
+                    if end_index < start_index:
+                        continue
+                    length = end_index - start_index + 1
+                    if length > max_answer_length:
+                        continue
+                    prelim_predictions.append(
+                        _PrelimPrediction(
+                            feature_index=feature_index,
+                            start_index=start_index,
+                            end_index=end_index,
+                            start_logit=start_log_probs[start_index],
+                            end_logit=end_log_probs[end_index]))
+        
+        prelim_predictions = sorted(
+            prelim_predictions,
+            key=lambda x: (x.start_logit + x.end_logit),
+            reverse=True)
+
+        # keep the nbest
+        seen_predictions = {}
+        nbest_predict = []
+        for pred in prelim_predictions:
+            if len(nbest_predict) >= n_best_size:
+                break
+            feature = features[pred.feature_index]
+            if pred.start_index > 0:  # this is a non-null prediction
+                tok_tokens = feature.tokens[pred.start_index:(pred.end_index + 1)]
+                orig_doc_start = feature.token_to_orig_map[pred.start_index]
+                orig_doc_end = feature.token_to_orig_map[pred.end_index]
+                orig_tokens = example.doc_tokens[orig_doc_start:(orig_doc_end + 1)]
+                tok_text = " ".join(tok_tokens)
+
+                # De-tokenize WordPieces that have been split off.
+                tok_text = tok_text.replace(" ##", "")
+                tok_text = tok_text.replace("##", "")
+
+                # Clean whitespace
+                tok_text = tok_text.strip()
+                tok_text = " ".join(tok_text.split())
+                orig_text = " ".join(orig_tokens)
+
+                final_text = get_final_text(tok_text, orig_text, do_lower_case, verbose_logging)
+                if final_text in seen_predictions:
+                    continue
+
+                seen_predictions[final_text] = True
+
+                nbest_predict.append({"text":final_text,
+                                      "start_logit":pred.start_logit,
+                                      "end_logit":pred.end_logit,
+                                      "start_index":pred.start_index,
+                                      "end_index":pred.end_index})
+
+        # In very rare edge cases we could have no valid predictions. So we
+        # just create a nonce prediction in this case to avoid failure.
+        if len(nbest_predict) == 0:
+            nbest_predict=[{"text":'',
+                            "start_logit":-1e4,
+                            "end_logit":-1e4,
+                            "start_index":0,
+                            "end_index":0}]
+
+        nbest[example.qas_id] = nbest_predict
+        predict_text[example.qas_id] = nbest_predict[0]["text"]
+    
+    exact, f1 = get_raw_scores(all_examples, predict_text)
+    predictions = defaultdict(dict)
+    for example in all_examples:
+        qas_id = example.qas_id
+        if qas_id not in nbest:
+            print('Missing prediction for %s' % qas_id)
+            continue
+        idx = '_'.join(qas_id.split('_')[:-1])
+        if idx not in predictions or predictions[idx]['answer_log_prob'] < example_answer_log_prob[qas_id]: 
+            predictions[idx]['answer_log_prob'] = example_answer_log_prob[qas_id]
+            predictions[idx]['f1'] = f1[qas_id]
+            predictions[idx]['em'] = exact[qas_id]
+            predictions[idx]['nbest'] = nbest[qas_id]
+    return predictions
