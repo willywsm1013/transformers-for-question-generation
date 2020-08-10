@@ -778,10 +778,11 @@ class SquadQGProcessor(SquadProcessor):
                 answer_text = None
                 answers = entry['answers']
                 
+                qas_id = '%s_%d' %(entry['id'], question_idx)
                 if is_training:
                     answers = [json.loads(answer) for answer in set([json.dumps(answer) for answer in answers])]
                     for answer_id, answer in enumerate(answers):
-                        qas_id = '%s_%d_%d' %(entry['id'], question_idx, answer_id)
+                        qas_id = '%s_%d' %(qas_id, answer_id)
                         answer_text = answer['text']
                         start_position_character = answer['answer_start']
 
@@ -797,7 +798,6 @@ class SquadQGProcessor(SquadProcessor):
                         )
                         examples.append(example)
                 else:
-                    raise NotImplementedError
                     example = SquadExample(
                         qas_id=qas_id,
                         question_text=question_text,

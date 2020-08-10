@@ -7,6 +7,13 @@ import logging
 from models import  InferSent
 from tqdm import tqdm
 import torch
+from argparse import ArgumentParser
+
+parser = ArgumentParser()
+parser.add_argument('--golden', help='golden reference sentences')
+parser.add_argument('--generated', help='generted sentences')
+parser.add_argument('--output_file', help='output file', default=None)
+args = parser.parse_args()
 
 # setup logger
 logger = logging.getLogger(__name__)
@@ -38,12 +45,12 @@ infersent.set_w2v_path(W2V_PATH)
 
 # read data
 refs = []
-with open(sys.argv[1], 'r') as f:
+with open(args.golden, 'r') as f:
     for line in f:
         refs.append(line[:-1])
 
 hyps = []
-with open(sys.argv[2], 'r') as f:
+with open(args.generated, 'r') as f:
     for line in f:
         hyps.append(line[:-1])
 
@@ -60,7 +67,11 @@ hyps_norm = np.linalg.norm(hyps_embeds, ord=2, axis=1)
 
 cosine = np.sum((refs_embeds*hyps_embeds), axis=1)/refs_norm/hyps_norm
 
-print ('%s,%f'%(sys.argv[1].split('/')[-2], np.mean(cosine)))
+if args.output_file is not None:
+    with open(args.output_file, 'a') as f:
+        print(json.dumps({'embedding_cosin':float(np.mean(cosine))}), file=f)
+else:
+    print ('%s,%f'%(sys.argv[1].split('/')[-2], np.mean(cosine)))
 
 '''
 # visualize importance 

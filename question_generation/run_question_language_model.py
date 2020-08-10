@@ -20,7 +20,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 import os
 import sys
-sys.apth.insert(0, '../')
+sys.path.insert(0, '../')
 import argparse
 import logging
 import json
@@ -644,7 +644,11 @@ def main():
         dataset = load_and_cached_data(config, tokenizer, args.dev_file_path, mode='dev', 
                                        is_qg=args.is_qg, save_cache=False)
         result = evaluate(args, dataset, model, tokenizer)
-        print (args.model_name_or_path, result)
+        if args.output_file is not None:
+            with open(args.output_file, 'a') as f:
+                print (json.dumps({'qlm_%s'%args.data_mode:result['loss']}), file=f)
+        else:
+            print (args.model_name_or_path, result)
     elif args.action == 'score':
         assert args.output_file is not None
         dataset, examples = load_and_cached_data(config, tokenizer, args.score_file_path, mode='score', is_qg=True,

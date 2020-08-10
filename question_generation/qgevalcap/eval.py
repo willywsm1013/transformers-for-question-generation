@@ -8,6 +8,7 @@ from cider.cider import Cider
 from collections import defaultdict
 from argparse import ArgumentParser
 from imp import reload
+import json
 
 import sys
 reload(sys)
@@ -95,12 +96,17 @@ if __name__ == "__main__":
     parser.add_argument("-out", "--out_file", dest="out_file", default="../generated.txt", help="output file to compare")
     parser.add_argument("-src", "--src_file", dest="src_file", default="../golden.txt", help="src file")
     parser.add_argument("-tgt", "--tgt_file", dest="tgt_file", default="../golden.txt", help="target file")
+    parser.add_argument("-o", "--output_file", default=None, help="output_file file")
 
     args = parser.parse_args()
 
     #print("scores: \n")
     output = eval(args.out_file, args.src_file, args.tgt_file)
 
-    print ('%s,%f,%f,%f'%(args.out_file.split('/')[-2], output['Bleu_4'], output['METEOR'], output['ROUGE_L']))
+    if args.output_file:
+        with open(args.output_file, 'a') as f:
+            print (json.dumps({'bleu4':output['Bleu_4'], 'meteor':output['METEOR'], 'rouge_l':output['ROUGE_L']}), file=f)
+    else:
+        print ('%s,%f,%f,%f'%(args.out_file.split('/')[-2], output['Bleu_4'], output['METEOR'], output['ROUGE_L']))
 
 

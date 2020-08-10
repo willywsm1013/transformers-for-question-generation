@@ -409,7 +409,7 @@ def score(args, model, tokenizer, dataset, prefix=""):
 
     start_time = timeit.default_timer()
     class_probs=[]
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+    for batch in tqdm(eval_dataloader, desc="Scoring"):
         model.eval()
         batch = [t.to(args.device) for t in batch]
 
@@ -534,7 +534,7 @@ def main():
                              "See details at https://nvidia.github.io/apex/amp.html")
     parser.add_argument('--server_ip', type=str, default='', help="Can be used for distant debugging.")
     parser.add_argument('--server_port', type=str, default='', help="Can be used for distant debugging.")
-    parser.add_argument('--beam_size', type=float, default=1, help="")
+    parser.add_argument('--output_file', type=str, default=None)
     args = parser.parse_args()
 
     args = parser.parse_args()
@@ -661,7 +661,11 @@ def main():
 
         # pred probs
         result = score(args, model, tokenizer, score_dataset)
-        print (result)
+        if args.output_file is not None:
+            with open(args.output_file, 'a') as f:
+                print (json.dumps({'paraphrase':result}), file=f)
+        else:
+            print (result)
         '''
         # write result
         with open(args.score_file_path, 'r') as f:

@@ -1109,7 +1109,11 @@ def main():
         # Evaluate
         result = evaluate(args, model, tokenizer, prefix='', cache_data=False)
 
-        print ('%s, %f, %f'%(args.model_name_or_path.split('/')[-2], result['exact'], result['f1']))
+        if args.output_file is not None:
+            with open(args.output_file, 'a' ) as f:
+                print (json.dumps({'em':result['exact'], 'f1':result['f1']}), file=f)
+        else:
+            print ('%s, %f, %f'%(args.model_name_or_path.split('/')[-2], result['exact'], result['f1']))
 
     if args.do_score and args.local_rank in [-1, 0]:
         assert args.output_file is not None
@@ -1120,7 +1124,6 @@ def main():
 
         model.to(args.device)
 
-        # Evaluate
         predictions = score(args, model, tokenizer, prefix='', cache_data=False)
 
         with open(args.score_file, 'r') as f:
