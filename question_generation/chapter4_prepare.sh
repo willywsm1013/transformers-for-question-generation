@@ -39,6 +39,10 @@ if [ ! -f data/squad/dev.json ]; then
     curl -Lo data/squad/dev.json https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v1.1.json
 fi
 
+echo "split squad data"
+cd data/squad
+python split_data.py
+cd ../../
 ##########################
 # prepare Wikipedia data #
 ##########################
