@@ -610,6 +610,7 @@ def generate(args, model, tokenizer, prefix="", cache_data=False):
         example_id_to_results[f.example_index].append(r)
 
     outputs=[]
+    idx = 0
     for example_id, example in enumerate(tqdm(examples, desc='collect answers')):
         features = example_id_to_features[example_id]
         results = example_id_to_results[example_id]
@@ -698,7 +699,9 @@ def generate(args, model, tokenizer, prefix="", cache_data=False):
                                     'answer_start':p[1],
                                     'log_prob':p[2],
                                     'start_log_prob':p[3],
-                                    'end_log_prob':p[4]}for p in predictions[:args.sample_num]]})
+                                    'end_log_prob':p[4]}for p in predictions[:args.sample_num]],
+                                    'id':str(idx),})
+        idx += 1
 
     evalTime = timeit.default_timer() - start_time
     logger.info("  Generation done in total %f secs (%f sec per example)",

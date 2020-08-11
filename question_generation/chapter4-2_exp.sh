@@ -24,8 +24,8 @@ if [ $mode == squad ];then
     gen_file=data/squad/QG_gen.json
 elif [ $mode == wiki ];then
     train_file=data/squad/train.json
-    def_file=data/squad/dev.json
-    gen_file=data/wiki/
+    def_file=data/squad/QG_dev.json
+    gen_file=data/wiki/wiki.json
 
 save_dir=save/chapter4-2
 result_dir=result/chapter4-2

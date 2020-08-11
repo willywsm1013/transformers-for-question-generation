@@ -250,7 +250,7 @@ def load_qg_data(file_path, tokenizer, max_sequence_length):
                        'question':q_ids,
                        'answer':a_ids,
                        'answer_position':ans_pos,
-                       'weight':weight} 
+                       'id':elem['id']} 
             
             examples.append(example)
             eval_examples.append({'context':elem['context'],
@@ -320,7 +320,7 @@ def load_ag_data(file_path, tokenizer, max_sequence_length):
             example = {'condition':condition,
                        'answer':a_ids,
                        'answer_position':ans_pos,
-                       'weight':1} 
+                       'id':elem['id']} 
             
             examples.append(example)
             eval_examples.append({'context':elem['context'],

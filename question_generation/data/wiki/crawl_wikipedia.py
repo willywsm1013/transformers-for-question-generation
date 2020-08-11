@@ -54,8 +54,8 @@ class WikiPedia():
 
         _, filename = os.path.split(self.title_file)
 
-        with open('data/crawl/%s.txt'%filename.split('.')[0], 'w') as f:
-            json.dump(result, f, indent=1, ensure_ascii=False)
+        with open('wiki.json', 'w') as f:
+            json.dump({'version':'wiki', 'data':result}, f, indent=1, ensure_ascii=False)
 
     def remove_squad_title(self, squad_train_path, squad_dev_path):
         squad_title={}

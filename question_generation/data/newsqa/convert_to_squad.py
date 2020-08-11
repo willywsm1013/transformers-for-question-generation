@@ -69,10 +69,12 @@ data = read_data('combined-newsqa-data-v1.json')
 train_data=[]
 dev_data=[]
 test_data=[]
+train_context = []
 for elem in data['data']:
     story_id = elem['storyId']
     if story_id in train_story_id:
         train_data.append(elem)
+        train_context.append({'title':story_id, 'context':elem['text']})
     elif story_id in dev_story_id:
         dev_data.append(elem)
     elif story_id in test_story_id:
@@ -80,6 +82,7 @@ for elem in data['data']:
     else:
         sys.exit()
 
+save_data({'version':data['version'], 'data':train_context}, 'train_context.json')
 train_data = convert_to_squad_format(train_data, mode='train')
 dev_data = convert_to_squad_format(dev_data, mode='dev')
 test_data = convert_to_squad_format(test_data, mode='test')

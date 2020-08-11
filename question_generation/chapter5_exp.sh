@@ -14,13 +14,13 @@
 # step 6 : train QA model                                                   -> evaluation
 
 train_file=data/squad/train.json
-dev_file=data/squad/dev.json
+dev_file=data/squad/QG_dev.json
 
 mode=short
 if [ $mode == short ];then
     gen_file=data/newsqa/train_2_context.json
 elif [ $mode == long ];then
-    gen_file=data/wiki/train_context.json
+    gen_file=data/newsqa/train_context.json
 
 save_dir=save/chapter5
 result_dir=result/chapter5
@@ -215,57 +215,35 @@ echo " ********************* "
 model_type=bert
 model_name=bert-base-uncased
 
-if [ $mode == squad ];then
-    # when generated qa pairs from squad, using QG_train.json and generated qa-pairs together
-    python run_squad.py --model_type ${model_type} \
-        --model_name_or_path ${model_name} \
-        --output_dir ${save_dir}/generated_squad/ \
-        --train_file ${clustering_file} \
-        --predict_file ${dev_file}\
-        --squad_file ${train_file} \
-        --sampler balance \
-        --balance_ratio 1 1 \
-        --do_train \
-        --per_gpu_train_batch_size 12 \
-        --gradient_accumulation_steps 2 \
-        --evaluate_during_training \
-        --do_lower_case \
-        --learning_rate 3e-5 \
-        --save_steps 500 \
-        --num_train_epochs 3 \
-        --train_is_qg \
-        --fp16 --fp16_opt_level O2
+# use generated qa-pairs to pretrain qa model
+python run_squad.py --model_type ${model_type} \
+    --model_name_or_path ${model_name} \
+    --output_dir ${save_dir}/generated/pretrain/ \
+    --train_file ${clustering_file} \
+    --predict_file ${dev_file}\
+    --do_train \
+    --train_is_qg \
+    --per_gpu_train_batch_size 12 \
+    --gradient_accumulation_steps 2 \
+    --evaluate_during_training \
+    --do_lower_case \
+    --learning_rate 3e-5 \
+    --save_steps 500 \
+    --num_train_epochs 3 \
+    --fp16 --fp16_opt_level O2
 
-elif [ $mode == wiki ];then
-    # use generated qa-pairs to pretrain qa model
-    python run_squad.py --model_type ${model_type} \
-        --model_name_or_path ${model_name} \
-        --output_dir ${save_dir}/generated_wiki/pretrain/ \
-        --train_file ${clustering_file} \
-        --predict_file ${dev_file}\
-        --do_train \
-        --train_is_qg \
-        --per_gpu_train_batch_size 12 \
-        --gradient_accumulation_steps 2 \
-        --evaluate_during_training \
-        --do_lower_case \
-        --learning_rate 3e-5 \
-        --save_steps 500 \
-        --num_train_epochs 3 \
-        --fp16 --fp16_opt_level O2
-
-    # fine-tune using training data
-    python run_squad.py --model_type ${model_type} \
-        --model_name_or_path ${save_dir}/generated_wiki/pretrain/checkpoint \
-        --output_dir ${save_dir}/generated_wiki/finetune/ \
-        --train_file ${train_file} \
-        --predict_file ${dev_file}\
-        --do_train \
-        --per_gpu_train_batch_size 12 \
-        --gradient_accumulation_steps 2 \
-        --evaluate_during_training \
-        --do_lower_case \
-        --learning_rate 3e-5 \
-        --save_steps 500 \
-        --num_train_epochs 3 \
-        --fp16 --fp16_opt_level O2
+# fine-tune using training data
+python run_squad.py --model_type ${model_type} \
+    --model_name_or_path ${save_dir}/generated/pretrain/checkpoint \
+    --output_dir ${save_dir}/generated/finetune/ \
+    --train_file ${train_file} \
+    --predict_file ${dev_file}\
+    --do_train \
+    --per_gpu_train_batch_size 12 \
+    --gradient_accumulation_steps 2 \
+    --evaluate_during_training \
+    --do_lower_case \
+    --learning_rate 3e-5 \
+    --save_steps 500 \
+    --num_train_epochs 3 \
+    --fp16 --fp16_opt_level O2
