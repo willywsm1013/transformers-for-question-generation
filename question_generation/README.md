@@ -59,6 +59,7 @@ python -m spacy download en_core_web_sm
 * step 2 : train question generation model
 * step 3 : infernce by beam search
 * step 4 : evaluation
+
 `bash chapter3_exp.sh`
 
 See chapter3_exp.sh for more details.
@@ -83,6 +84,7 @@ preprocess data
 * step 2 : train QG models
 * step 3 : generate qa pairs using golden answers
 * step 4 : use generated qa pairs to train qa model.
+
 `bash chapter4-1_exp.sh`
 
 See chapter4-1_exp.sh for more details.
@@ -92,15 +94,19 @@ See chapter4-1_exp.sh for more details.
 * step 2 : train AG and QG models
 * step 3 : generate qa pairs using NER extractor or AG model
 * step 4 : use generated qa pairs to train qa model.
+
 `bash chapter4-2_exp.sh`
 
 See chapter4-2_exp.sh for more details.
 
 ### Chapter 5
 * step 1 : prepare data
+
 `bash chapter5_prepare.sh`
+
 * step 2 : use models trained in Chapter 4 to generate answer-question pairs
 * step 3 : use generated qa pairs to train qa model. 
+
 `bash chapter5_exp.sh`
 
 See chapter5_exp.sh for more details.
