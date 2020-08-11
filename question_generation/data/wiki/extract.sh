@@ -9,11 +9,12 @@ squad_path=../squad
 #          Update the file names at the top of ./pagerank/WikipediaPagerank.java and compile. 
 
 
-# step 2: run pagerank and get titles
-cd pagerank
-javac WikipediaPagerank.java
-java -mx15G WikipediaPagerank 
-cd ../
+# step 2: run pagerank and get titles, you can rerun pagerank using wiki dumps from step 1, 
+#         or use pagerank result pagerank/wiki-20220401.txt.
+#cd pagerank
+#javac WikipediaPagerank.java
+#java -mx15G WikipediaPagerank 
+#cd ../
 
 # step 3: crawl articles from wikipedia and remove titiles appear in squad training set and dev set
 title_file=pagerank/wiki-20220401.txt
