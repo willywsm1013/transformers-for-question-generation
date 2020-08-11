@@ -55,6 +55,7 @@ python -m spacy download en_core_web_sm
 ## Experiments
 ### Chapter 3
 * step 1 : prepare data and evaluation model
+
 `bash chapter3_prepare.sh`
 * step 2 : train question generation model
 * step 3 : infernce by beam search
