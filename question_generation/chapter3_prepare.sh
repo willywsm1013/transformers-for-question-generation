@@ -119,9 +119,12 @@ done
 #####################################
 # prepare question answering  model #
 #####################################
+echo ' *************************************'
+echo ' * Training Question answering model *'
+echo ' *************************************'
+
 model_type=bert
 model_name=bert-large-uncased
-
 # train
 python run_squad.py --model_type ${model_type} \
     --model_name_or_path ${model_name} \

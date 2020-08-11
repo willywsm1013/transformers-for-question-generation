@@ -48,7 +48,7 @@ echo " ************* "
 echo " * Inference * "
 echo " ************* "
 
-python run_question_language_model.py gen \
+python run_question_generation.py gen \
 		--model_name_or_path ${save_dir}/checkpoint \
         --dev_file_path ${dev_file} \
 		--data_mode ${data_mode} \
