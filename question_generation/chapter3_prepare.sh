@@ -1,4 +1,4 @@
-evaluation_dir=save/evaluation
+evaluation_dir=save/chapter3/evaluation
 
 #################
 # prepare Squad #
@@ -24,34 +24,53 @@ fi
 
 echo 'Preparing Infersent'
 cd InferSent
-mkdir encoder
+mkdir -p encoder
 embedding=fasttext
+
 if [ $embedding == glove ]; then
-    mkdir GloVe
-    curl -Lo GloVe/glove.840B.300d.zip http://nlp.stanford.edu/data/glove.840B.300d.zip
-    unzip GloVe/glove.840B.300d.zip -d GloVe/
-    curl -Lo encoder/infersent1.pkl https://dl.fbaipublicfiles.com/infersent/infersent1.pkl
+    mkdir -p GloVe
+    if [ ! -f Glove/glove.840B.300d ]; then
+        curl -Lo GloVe/glove.840B.300d.zip http://nlp.stanford.edu/data/glove.840B.300d.zip
+        unzip GloVe/glove.840B.300d.zip -d GloVe/
+    fi
+    if [ ! -f encoder/infersent1.pkl ];then
+        curl -Lo encoder/infersent1.pkl https://dl.fbaipublicfiles.com/infersent/infersent1.pkl
+    fi
 elif [ $embedding == fasttext ];then
-    mkdir fastText
-    curl -Lo fastText/crawl-300d-2M.vec.zip https://dl.fbaipublicfiles.com/fasttext/vectors-english/crawl-300d-2M.vec.zip
-    unzip fastText/crawl-300d-2M.vec.zip -d fastText/
-    curl -Lo encoder/infersent2.pkl https://dl.fbaipublicfiles.com/infersent/infersent2.pkl
+    mkdir -p fastText
+    if [ ! -f fastText/crawl-300d-2M.vec ];then
+        curl -Lo fastText/crawl-300d-2M.vec.zip https://dl.fbaipublicfiles.com/fasttext/vectors-english/crawl-300d-2M.vec.zip
+        unzip fastText/crawl-300d-2M.vec.zip -d fastText/
+    fi
+    if [ ! -f encoder/infersent2.pkl ];then
+        curl -Lo encoder/infersent2.pkl https://dl.fbaipublicfiles.com/infersent/infersent2.pkl
+    fi
 else
     echo 'Unknown embedding $embedding , exit'
     exit
 fi
+cd ../
 
 ############################
 # prepare Paraphrase model #
 ############################
 # make sure Quora Question Pair train.csv is already downloaded from https://www.kaggle.com/c/quora-question-pairs
 
-echo ' ******************************'
-echo ' * Preprocess Quora train.csv *'
-echo ' ******************************'
-cd data/quora
-python extract_all.py
-cd ../../
+if [ ! -f data/quora/train.csv ] ; then
+    echo $PWD
+    echo "data/quora/train.csv not found, please download first"
+    exit
+fi 
+
+if [ ! -f data/quora/train.json ];then
+    echo ' ******************************'
+    echo ' * Preprocess Quora train.csv *'
+    echo ' ******************************'
+
+    cd data/quora
+    python extract_all.py
+    cd ../../
+fi
 
 echo ' *****************************'
 echo ' * Training paraphrase model *'
@@ -89,6 +108,8 @@ echo ' ***************************'
 echo ' * Training language model *'
 echo ' ***************************'
 
+train_file=data/squad/train.json
+dev_file=data/squad/dev.json
 for data_mode in q cq
 do
     lr=1e-5
@@ -97,19 +118,20 @@ do
     if [ $data_mode == q ];then
         epoch=7
         accu_steps=1
-    elif [$data_mode == cq];then
+    elif [ $data_mode == cq ];then
         epoch=9
-        accu_steps=4
+        accu_steps=8
     fi
+
     python run_question_language_model.py train \
             --model_name_or_path gpt2 \
             --train_file_path ${train_file} \
             --dev_file_path ${dev_file} \
-            --save_dir ${evaluation}/qlm/${data_mode}/ \
+            --save_dir ${evaluation_dir}/qlm/${data_mode}/ \
             --data_mode ${data_mode} \
             --epoch ${epoch} \
-            --train_batch_size $batch_size \
-            --gradient_accumulation_steps $((${batch_size}/${accumu_steps})) \
+            --train_batch_size $((${batch_size}/${accu_steps})) \
+            --gradient_accumulation_steps ${accu_steps} \
             --eval_batch_size 32 \
             --eval_step 1000 \
             --warmup_steps  ${warm}\
@@ -125,6 +147,7 @@ echo ' *************************************'
 
 model_type=bert
 model_name=bert-large-uncased
+
 # train
 python run_squad.py --model_type ${model_type} \
     --model_name_or_path ${model_name} \
