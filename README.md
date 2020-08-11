@@ -1,6 +1,8 @@
 # Question Generation
 This is code for my thesis, which is modified from https://github.com/huggingface/transformers
 
+My code is put in ./question_generation .
+
 ## requirements
 * python 3.7
 * pytorch 1.3.1
@@ -17,6 +19,18 @@ python -m spacy download en_core_web_sm
 * pip install requirements
 
 ## Main files and Usage
+
+### run_answer_generation.py
+```
+[training]
+--balance, balance number of start positions and end positions
+
+[inference]
+--sample_num, number of output answers [default:10]
+--start_sample_num, number of start position [default:10]
+--end_sample_num, number of end position [default:2]
+```
+
 ### run_question_generation.py 
 ```
 [training ]
@@ -40,47 +54,39 @@ python -m spacy download en_core_web_sm
 --sort_mode, sorting question using difference scoring method
 --cluster, which cluster is used to cluster questions.
 ```
-### run_answer_generation.py
-```
-[training]
---balance, balance number of start positions and end positions
 
-[inference]
---sample_num, number of output answers [default:10]
---start_sample_num, number of start position [default:10]
---end_sample_num, number of end position [default:2]
-```
 
 
 ## Experiments
-### Chapter 3
-* step 1 : prepare data and evaluation model
+### Chapter 3 --- Question generation
+#### Prepare data and evaluation model
 
 `bash chapter3_prepare.sh`
-* step 2 : train question generation model
-* step 3 : infernce by beam search
-* step 4 : evaluation
+
+#### experiment
+* step 1 : train question generation model
+* step 2 : infernce by beam search
+* step 3 : evaluation
 
 `bash chapter3_exp.sh`
 
 See chapter3_exp.sh for more details.
 
 
-### Chapter 4
-preprocess data
+### Chapter 4 --- Training QA model with generated data
+#### Preprocess Data
 * split squad data
+
+| dataset    |               |             |
+| ---------- | ------------- |:-----------:|
+| train.json | QG_train.json | QG_gen.json |
+| dev.json   | QG_dev.json   | RC_dev.json |
+
 * crawl wikipedia
 
 `bash chapter4_prepare.sh`
 
 #### Chapter 4-1 : generate qa pairs on golden answers
-* split data
-
-| dataset | split1| split2|
-| -------- | -------- | -------- |
-| train.json    | QG_train.json     | QG_gen.json  |
-|dev.json | QG_dev.json| RC_dev.json|
-
 * step 1 : prepare scoring model
 * step 2 : train QG models
 * step 3 : generate qa pairs using golden answers
@@ -100,13 +106,14 @@ See chapter4-1_exp.sh for more details.
 
 See chapter4-2_exp.sh for more details.
 
-### Chapter 5
-* step 1 : prepare data
+### Chapter 5 --- Transfer from SQuAD to NewsQA
+#### Prepare data
 
 `bash chapter5_prepare.sh`
 
-* step 2 : use models trained in Chapter 4 to generate answer-question pairs
-* step 3 : use generated qa pairs to train qa model. 
+#### experiment
+* step 1 : use models trained in Chapter 4 to generate qa pairs
+* step 2 : use generated qa pairs to train qa model. 
 
 `bash chapter5_exp.sh`
 
