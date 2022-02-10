@@ -76,7 +76,7 @@ sentencepiece==0.1.85
 six==1.14.0
 tensorboard==2.1.1
 tensorboardX==2.0
-tensorflow==2.1.0
+tensorflow==2.5.3
 tensorflow-estimator==2.1.0
 tensorflow-gpu==2.1.0
 tensorflow-hub==0.8.0
