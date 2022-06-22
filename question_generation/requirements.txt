@@ -40,7 +40,7 @@ matplotlib==3.1.2
 murmurhash==1.0.2
 nltk==3.4.5
 nmslib==2.0.6
-numpy==1.18.1
+numpy==1.22.0
 oauthlib==3.1.0
 olefile==0.46
 onnxruntime-gpu==1.2.0
